@@ -13,7 +13,7 @@ Measured: 59.98 / 84.11 fps, 0 discarded frames (raw V4L2).
 
 ## Repository layout
 - `driver/` kernel module sources (`i2c/`), `build_on_orin.sh`, `make_overlay.py` (device-tree overlay from the stock one), `kamera_mod.sh` (switch stock / custom).
-- `capture/` `v4l2raw.py` (zero-copy raw V4L2 capture + sensor exposure / gain), `raw_isp.py` (GPU ISP), `raw_record.py` (record at full rate, convert to JPEG / mp4), `undistort.py`.
+- `capture/` `v4l2raw.py` (zero-copy raw V4L2 capture + sensor exposure / gain), `raw_isp.py` (GPU ISP), `isp_cuda.py` (same ISP as CUDA kernels, 3.3 ms on the Orin), `raw_record.py` (record at full rate, convert to JPEG / mp4), `undistort.py`.
 - `calib/` lens calibrations (fisheye model) for each mode, `calibrate_camera.py`, the 9x6 checkerboard image (3.2 cm squares on our screen).
 
 ## Quick start (on the Orin)
@@ -48,8 +48,13 @@ Python needs numpy, torch (CUDA) and opencv for `conv`; capture itself only need
    the VI discards every frame (`corr_err ... err_data 256`). Check a build: an unmodified `nv_imx219.c` must disassemble identically to the stock module.
 2. Never `rmmod nv_imx219` while loaded (hung / rebooted the Orin): replace the file and reboot (`kamera_mod.sh`).
 3. Raw RG10 data: uint16, value = 10-bit << 6, black level ~4096.
-4. **Odd rows are shifted 8 px left** in every x2-binned full-width readout (also the stock 1640x1232 mode; Argus hides it): the GPU ISP shifts
-   them back (`raw_row_shift`, default 8 for width 1640). Some comb texture remains on vertical edges (lower vertical resolution of x2 binning).
+4. **Rows come out shifted left by 8·(y mod 4) px** (measured 0 / 9 / 16 / 23 px) in every x2-binned full-width readout, at any frame rate or
+   exposure (also the stock 1640x1232 mode; Argus hides it; 1280x720 is clean). Fixing only the odd rows by 8 px leaves a comb pattern; the GPU ISP
+   shifts row classes 1, 2, 3 back by 8, 16, 24 px (`raw_row_shift`, default 8 for width 1640).
+4b. **Exposure / gain / frame rate are not forwarded to the sensor in raw V4L2 streaming**: `capture/v4l2raw.py` writes the IMX219 registers
+   directly over I2C (0x0160 frame length, 0x015A coarse exposure in 18.9 µs lines, 0x0157 analog gain = 256 − 256/gain).
+4c. `capture/isp_cuda.py`: the same ISP as five hand-written CUDA kernels (torch cpp_extension, compiled on first use): 3.3 ms per 1640x616 frame on
+   the Orin NX vs 25 ms for the PyTorch version (max abs difference 0.05).
 5. x4 binning (`0x0174 = 2`) or binning + skipping for 820x616 gives a 4-px even/odd row shift (sawtooth): rejected. 1640x720 gave black frames.
 6. The first ~60 s after boot capture can fail spuriously; Argus and raw V4L2 cannot run at the same time (`sudo systemctl stop nvargus-daemon`).
 
