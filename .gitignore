@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.ko
+*.o
+*.mod*
+*.cmd
+Module.symvers
+modules.order
+*.raw
+*.bin
+*.dtbo
+*.dts
